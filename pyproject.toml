@@ -1,0 +1,20 @@
+[tool.poetry]
+name = "prfr"
+version = "0.1.0"
+description = ""
+authors = ["Jeff Shen <jshen2014@hotmail.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.8,<3.11"
+joblib = "^1.1.0"
+numba = "^0.55.1"
+numpy = "<1.22"
+scipy = "^1.8.0"
+sklearn = "^0.0"
+tqdm = "^4.64.0"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
