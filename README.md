@@ -1,6 +1,14 @@
 # prfr
 
-Probabilistic random forest regressor
+Probabilistic random forest regressor: random forest model that accounts for errors in predictors and yields calibrated probabilistic predictions.
+
+## Installation
+
+```bash
+pip install prfr
+```
+
+## Example usage
 
 ```python
 import numpy as np
