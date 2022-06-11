@@ -10,7 +10,7 @@ from sklearn.exceptions import DataConversionWarning
 from sklearn.linear_model import LinearRegression
 from sklearn.tree._tree import DOUBLE, DTYPE
 from sklearn.utils import check_random_state, compute_sample_weight
-from sklearn.utils.fixes import _joblib_parallel_args, delayed
+from sklearn.utils.fixes import delayed
 from sklearn.utils.multiclass import type_of_target
 from sklearn.utils.validation import _check_sample_weight
 from tqdm.auto import tqdm
@@ -464,8 +464,7 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
             # since correctness does not rely on using threads.
             trees = Parallel(
                 n_jobs=self.n_jobs,
-                verbose=self.verbose,
-                **_joblib_parallel_args(prefer="threads"),
+                verbose=self.verbose
             )(
                 delayed(_parallel_build_trees)(
                     t,
