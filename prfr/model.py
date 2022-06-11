@@ -38,7 +38,9 @@ def _parallel_build_trees(
 
     if not (isinstance(eX, float) or isinstance(eX, int)):
         assert isinstance(eX, np.ndarray), "eX must be a float or a numpy array"
-        assert X.shape == eX.shape, "if eX is a numpy array, X and eX must have the same shape"
+        assert (
+            X.shape == eX.shape
+        ), "if eX is a numpy array, X and eX must have the same shape"
     X = np.random.normal(X, eX)
     assert isinstance(X, np.ndarray)
 
@@ -67,8 +69,6 @@ def _parallel_build_trees(
         tree.fit(X, y, sample_weight=sample_weight, check_input=False)
 
     return tree
-
-
 
 
 class ProbabilisticRandomForestRegressor(RandomForestRegressor):
@@ -316,8 +316,49 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
     rather than ``n_features / 3``. The latter was originally suggested in
     [1], whereas the former was more recently justified empirically in [2].
     """
-    
-    def fit(self, X, y, eX=0., sample_weight=None, leave_pbar=True):
+
+    def __init__(
+        self,
+        n_estimators=100,
+        *,
+        criterion="squared_error",
+        max_depth=None,
+        min_samples_split=2,
+        min_samples_leaf=1,
+        min_weight_fraction_leaf=0.0,
+        max_features=1.0,
+        max_leaf_nodes=None,
+        min_impurity_decrease=0.0,
+        bootstrap=True,
+        oob_score=False,
+        n_jobs=None,
+        random_state=None,
+        verbose=0,
+        warm_start=False,
+        ccp_alpha=0.0,
+        max_samples=None,
+    ):
+        super().__init__(
+            n_estimators=n_estimators,
+            criterion=criterion,
+            max_depth=max_depth,
+            min_samples_split=min_samples_split,
+            min_samples_leaf=min_samples_leaf,
+            min_weight_fraction_leaf=min_weight_fraction_leaf,
+            max_features=max_features,
+            max_leaf_nodes=max_leaf_nodes,
+            min_impurity_decrease=min_impurity_decrease,
+            bootstrap=bootstrap,
+            oob_score=oob_score,
+            n_jobs=-1 if n_jobs is None else n_jobs,
+            random_state=random_state,
+            verbose=verbose,
+            warm_start=warm_start,
+            ccp_alpha=ccp_alpha,
+            max_samples=max_samples,
+        )
+
+    def fit(self, X, y, eX=0.0, sample_weight=None, leave_pbar=True):
         """
         Build a forest of trees from the training set (X, y).
 
@@ -335,7 +376,7 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
         eX : array-like of shape (n_samples, n_features) or float, default=0.
              The Gaussian uncertainty/error on the training input samples. If an array-like,
                 it must be the same shape as ``X``. If a float, it is broadcasted to have the
-                same shape as ``X``. 
+                same shape as ``X``.
 
         sample_weight : array-like of shape (n_samples,), default=None
             Sample weights. If None, then samples are equally weighted. Splits
@@ -462,10 +503,7 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
             # that case. However, for joblib 0.12+ we respect any
             # parallel_backend contexts set at a higher level,
             # since correctness does not rely on using threads.
-            trees = Parallel(
-                n_jobs=self.n_jobs,
-                verbose=self.verbose
-            )(
+            trees = Parallel(n_jobs=self.n_jobs, verbose=self.verbose)(
                 delayed(_parallel_build_trees)(
                     t,
                     self,
@@ -507,7 +545,9 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
 
         return self
 
-    def predict(self, X, eX=0., apply_bias=True, apply_calibration=True, leave_pbar=False):
+    def predict(
+        self, X, eX=0.0, apply_bias=True, apply_calibration=True, leave_pbar=False
+    ):
         """
         Predict regression targets for X.
 
@@ -524,7 +564,7 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
         eX : array-like of shape (n_samples, n_features) or float, default=0.
             The uncertainty/error on the input samples. If an array-like, it
             must be the same shape as X. If a float, it is broadcasted to
-            have the same shape as X. 
+            have the same shape as X.
 
         apply_bias : bool, default=True
             If True and if a bias model has been fit with ``fit_bias``, then
@@ -536,12 +576,12 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
 
         Returns
         -------
-        y : ndarray of shape (n_samples, n_trees) 
-            The predicted values. Each row in y corresponds to the predictions 
-            for a particular input sample, and each column represents the 
+        y : ndarray of shape (n_samples, n_trees)
+            The predicted values. Each row in y corresponds to the predictions
+            for a particular input sample, and each column represents the
             predictions from a particular tree in the forest.
         """
-        preds = rf_pred(self, X, eX, n_jobs=self.n_jobs, leave_pbar=leave_pbar) 
+        preds = rf_pred(self, X, eX, n_jobs=self.n_jobs, leave_pbar=leave_pbar)
         assert preds.shape[0] == X.shape[0]
         assert preds.shape[1] == self.n_estimators
         if hasattr(self, "bias_model") and apply_bias:
@@ -552,9 +592,9 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
 
         return preds
 
-    def fit_bias(self, X, y, eX=0., apply_calibration=True):
+    def fit_bias(self, X, y, eX=0.0, apply_calibration=True):
         """
-        Fit bias model to the data. 
+        Fit bias model to the data.
 
         Parameters
         ----------
@@ -568,7 +608,9 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
         """
         assert np.prod(y.shape) == y.size
         y = y.reshape(-1, 1)
-        preds = self.predict(X, eX=eX, apply_bias=False, apply_calibration=apply_calibration)
+        preds = self.predict(
+            X, eX=eX, apply_bias=False, apply_calibration=apply_calibration
+        )
         assert preds.shape[0] == X.shape[0]
         assert preds.shape[1] == self.n_estimators
         residuals = y - preds.mean(axis=1).reshape(-1, 1)
@@ -576,8 +618,20 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
         self.bias_model = LinearRegression(fit_intercept=True, n_jobs=self.n_jobs)
         self.bias_model.fit(X, residuals)
 
-
-    def calibrate(self, X, y, eX=0., bounds=(0.5, 1.5), niter=(100), ks_weight = 1., mse_weight = 1., ks_norm = True, mse_norm = True, apply_bias=True, return_goodness = False):
+    def calibrate(
+        self,
+        X,
+        y,
+        eX=0.0,
+        bounds=(0.5, 1.5),
+        niter=(100),
+        ks_weight=1.0,
+        mse_weight=1.0,
+        ks_norm=True,
+        mse_norm=True,
+        apply_bias=True,
+        return_goodness=False,
+    ):
         """
         Automatically calibrate the standard deviation of the probabilistic random forest (widths of the PDFs).
 
@@ -660,18 +714,18 @@ def inv_cdf(x: np.ndarray, v: float, calibration_value: float):
     x, y = ecdf(x)
     return np.interp(v, x, y)
 
+
 @njit(parallel=True)
 def multi_inv_cdfs(predictions, values, calibration_value):
     """
-    Compute the empirical CDF of each row in predictions and use a linear interpolation 
+    Compute the empirical CDF of each row in predictions and use a linear interpolation
     to apply the CDF to the values.
     """
     n = predictions.shape[0]
-    inv_cdf_vals = np.zeros(n)    
+    inv_cdf_vals = np.zeros(n)
     for i in prange(n):
         inv_cdf_vals[i] = inv_cdf(predictions[i], values[i], calibration_value)
     return inv_cdf_vals
-
 
 
 @jit
@@ -701,7 +755,11 @@ def test_calibration_value(predictions, values, calibration_value):
 
 
 def rf_pred(
-    model: ProbabilisticRandomForestRegressor, X: np.ndarray, eX = 0., n_jobs: int = -1, leave_pbar=False
+    model: ProbabilisticRandomForestRegressor,
+    X: np.ndarray,
+    eX=0.0,
+    n_jobs: int = -1,
+    leave_pbar=False,
 ) -> np.ndarray:
     """
     Makes predictions in parallel using a random forest. Returns a prediction for each tree.
@@ -719,7 +777,7 @@ def rf_pred(
     """
     return np.array(
         Parallel(n_jobs=n_jobs)(
-            delayed(tree.predict)(np.random.normal(X, eX)) for tree in tqdm(model.estimators_, leave=leave_pbar)
+            delayed(tree.predict)(np.random.normal(X, eX))
+            for tree in tqdm(model.estimators_, leave=leave_pbar)
         )
     ).T
-
