@@ -1,8 +1,8 @@
 from warnings import catch_warnings, simplefilter, warn
 
+import numpy as np
 from joblib import Parallel, delayed
 from numba import jit, njit, prange
-import numpy as np
 from scipy.sparse import issparse
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.ensemble._forest import _generate_sample_indices, _get_n_samples_bootstrap
@@ -30,6 +30,7 @@ def _parallel_build_trees(
     class_weight=None,
     n_samples_bootstrap=None,
     eX=0,
+    eY=0,
 ):
     """
     Private function used to fit a single tree in parallel."""
@@ -41,8 +42,15 @@ def _parallel_build_trees(
         assert (
             X.shape == eX.shape
         ), "if eX is a numpy array, X and eX must have the same shape"
-    X = np.random.normal(X, eX)
-    assert isinstance(X, np.ndarray)
+        X = np.random.normal(X, eX)
+        # assert isinstance(X, np.ndarray)
+
+    if not (isinstance(eY, float) or isinstance(eY, int)):
+        assert isinstance(eY, np.ndarray), "eY must be a float or a numpy array"
+        assert (
+            y.shape == eY.shape
+        ), "if eY is a numpy array, Y and eY must have the same shape"
+        y = np.random.normal(y, eY)
 
     if forest.bootstrap:
         n_samples = X.shape[0]
@@ -337,6 +345,7 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
         warm_start=False,
         ccp_alpha=0.0,
         max_samples=None,
+        scale_labels=True,
     ):
         super().__init__(
             n_estimators=n_estimators,
@@ -357,8 +366,9 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
             ccp_alpha=ccp_alpha,
             max_samples=max_samples,
         )
+        self.scale_labels = scale_labels
 
-    def fit(self, X, y, eX=0.0, sample_weight=None, leave_pbar=True):
+    def fit(self, X, y, eX=0.0, eY=0.0, sample_weight=None, leave_pbar=True):
         """
         Build a forest of trees from the training set (X, y).
 
@@ -516,6 +526,7 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
                     class_weight=self.class_weight,
                     n_samples_bootstrap=n_samples_bootstrap,
                     eX=eX,
+                    eY=eY,
                 )
                 for i, t in tqdm(enumerate(trees), total=len(trees), leave=leave_pbar)
             )
@@ -576,23 +587,26 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
 
         Returns
         -------
-        y : ndarray of shape (n_samples, n_trees)
+        y : ndarray of shape (n_samples, n_outputs, n_trees)
             The predicted values. Each row in y corresponds to the predictions
             for a particular input sample, and each column represents the
             predictions from a particular tree in the forest.
         """
-        preds = rf_pred(self, X, eX, n_jobs=self.n_jobs, leave_pbar=leave_pbar)
+        preds = rf_pred(
+            self, X, eX, n_jobs=self.n_jobs, leave_pbar=leave_pbar
+        ).transpose(1, 0, 2)
         assert preds.shape[0] == X.shape[0]
-        assert preds.shape[1] == self.n_estimators
+        assert preds.shape[1] == self.n_outputs_
+        assert preds.shape[2] == self.n_estimators
         if hasattr(self, "bias_model") and apply_bias:
-            preds += self.bias_model.predict(X).reshape(preds.shape[0], 1)
+            preds += self.bias_model.predict(X).reshape(-1, self.n_outputs_, 1)
         if hasattr(self, "calibration") and apply_calibration:
-            mean = preds.mean(axis=1).reshape(preds.shape[0], 1)
-            preds = (preds - mean) * self.calibration + mean
+            mean = preds.mean(axis=-1).reshape(-1, self.n_outputs_, 1)
+            preds = (preds - mean) * self.calibration_values[:, None, None] + mean
 
         return preds
 
-    def fit_bias(self, X, y, eX=0.0, apply_calibration=True):
+    def fit_bias(self, X, y, eX=0.0, eY=0.0, apply_calibration=True):
         """
         Fit bias model to the data.
 
@@ -606,15 +620,11 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
         y : array-like of shape (n_samples,)
             The target values. It is treated as a binary problem.
         """
-        assert np.prod(y.shape) == y.size
-        y = y.reshape(-1, 1)
+
         preds = self.predict(
             X, eX=eX, apply_bias=False, apply_calibration=apply_calibration
         )
-        assert preds.shape[0] == X.shape[0]
-        assert preds.shape[1] == self.n_estimators
-        residuals = y - preds.mean(axis=1).reshape(-1, 1)
-        assert np.prod(residuals.shape) == residuals.size
+        residuals = y - preds.mean(axis=-1).reshape(-1, self.n_outputs_)
         self.bias_model = LinearRegression(fit_intercept=True, n_jobs=self.n_jobs)
         self.bias_model.fit(X, residuals)
 
@@ -623,6 +633,7 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
         X,
         y,
         eX=0.0,
+        eY=0.0,
         bounds=(0.5, 1.5),
         niter=(100),
         ks_weight=1.0,
@@ -630,7 +641,6 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
         ks_norm=True,
         mse_norm=True,
         apply_bias=True,
-        return_goodness=False,
     ):
         """
         Automatically calibrate the standard deviation of the probabilistic random forest (widths of the PDFs).
@@ -660,36 +670,32 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
         mse_norm : bool, default=True
             Whether to normalize the MSE statistic to a max of 1.
         """
-        assert np.ndim(X) == 2, "X must be a 2D array"
-        assert len(y.shape) == 1 or np.prod(y.shape) == y.size, "y must be a 1D array"
-
-        y = y.flatten()
-
-        n = X.shape[0]
-        assert n == y.size, "X and y must have the same number of rows"
 
         preds = self.predict(X, eX=eX, apply_bias=apply_bias, apply_calibration=False)
 
         grid = np.linspace(bounds[0], bounds[1], niter)
-        goodness = [test_calibration_value(preds, y, i) for i in grid]
 
-        ks_stats, mses = zip(*goodness)
-        ks_stats = np.array(ks_stats)
-        mses = np.array(mses)
+        self.calibration_values = np.zeros(self.n_outputs_)
 
-        if ks_norm:
-            ks_stats /= ks_stats.max()
-        if mse_norm:
-            mses /= mses.max()
+        for j in tqdm(range(self.n_outputs_)):
+            goodness = [
+                test_calibration_value(preds[:, j], y[:, j].flatten(), i) for i in grid
+            ]
 
-        metric = ks_weight * ks_stats + mse_weight * mses
+            ks_stats, mses = zip(*goodness)
+            ks_stats = np.array(ks_stats)
+            mses = np.array(mses)
 
-        match_idx = np.argmin(metric)
+            if ks_norm:
+                ks_stats /= ks_stats.max()
+            if mse_norm:
+                mses /= mses.max()
 
-        self.calibration = grid[match_idx]
+            metric = ks_weight * ks_stats + mse_weight * mses
 
-        if return_goodness:
-            return grid, goodness
+            match_idx = np.argmin(metric)
+
+            self.calibration_values[j] = grid[match_idx]
 
 
 @njit
@@ -771,13 +777,16 @@ def rf_pred(
         n_jobs: number of cores to use. default is -1 (all cores)
 
     Outputs:
-        labels: a 2d array with a row of predictions for each
-        feature, where each column in the row corresponds to a
-        tree in the forest
+        labels: 3D array with shape (n_samples, n_outputs, n_trees)
     """
-    return np.array(
+    out = np.array(
         Parallel(n_jobs=n_jobs)(
             delayed(tree.predict)(np.random.normal(X, eX))
             for tree in tqdm(model.estimators_, leave=leave_pbar)
         )
     ).T
+
+    if np.ndim(out) == 2:
+        out = out.reshape(1, *out.shape)
+
+    return out
