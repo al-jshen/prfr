@@ -5,9 +5,11 @@ from joblib import Parallel, delayed
 from numba import jit, njit, prange
 from scipy.sparse import issparse
 from sklearn.ensemble import RandomForestRegressor
-from sklearn.ensemble._forest import _generate_sample_indices, _get_n_samples_bootstrap
+from sklearn.ensemble._forest import (_generate_sample_indices,
+                                      _get_n_samples_bootstrap)
 from sklearn.exceptions import DataConversionWarning
 from sklearn.linear_model import LinearRegression
+from sklearn.preprocessing import StandardScaler
 from sklearn.tree._tree import DOUBLE, DTYPE
 from sklearn.utils import check_random_state, compute_sample_weight
 from sklearn.utils.fixes import delayed
@@ -29,28 +31,11 @@ def _parallel_build_trees(
     verbose=0,
     class_weight=None,
     n_samples_bootstrap=None,
-    eX=0,
-    eY=0,
 ):
     """
     Private function used to fit a single tree in parallel."""
     if verbose > 1:
         print("building tree %d of %d" % (tree_idx + 1, n_trees))
-
-    if not (isinstance(eX, float) or isinstance(eX, int)):
-        assert isinstance(eX, np.ndarray), "eX must be a float or a numpy array"
-        assert (
-            X.shape == eX.shape
-        ), "if eX is a numpy array, X and eX must have the same shape"
-        X = np.random.normal(X, eX)
-        # assert isinstance(X, np.ndarray)
-
-    if not (isinstance(eY, float) or isinstance(eY, int)):
-        assert isinstance(eY, np.ndarray), "eY must be a float or a numpy array"
-        assert (
-            y.shape == eY.shape
-        ), "if eY is a numpy array, Y and eY must have the same shape"
-        y = np.random.normal(y, eY)
 
     if forest.bootstrap:
         n_samples = X.shape[0]
@@ -325,6 +310,9 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
     [1], whereas the former was more recently justified empirically in [2].
     """
 
+    scaler: StandardScaler
+    scaler_is_trained: bool
+
     def __init__(
         self,
         n_estimators=100,
@@ -345,7 +333,6 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
         warm_start=False,
         ccp_alpha=0.0,
         max_samples=None,
-        scale_labels=True,
     ):
         super().__init__(
             n_estimators=n_estimators,
@@ -366,7 +353,8 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
             ccp_alpha=ccp_alpha,
             max_samples=max_samples,
         )
-        self.scale_labels = scale_labels
+        self.scaler = StandardScaler()
+        self.scaler_is_trained = False
 
     def fit(self, X, y, eX=0.0, eY=0.0, sample_weight=None, leave_pbar=True):
         """
@@ -507,6 +495,25 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
                 for _ in range(n_more_estimators)
             ]
 
+            if not (isinstance(eX, float) or isinstance(eX, int)):
+                assert isinstance(eX, np.ndarray), "eX must be a float or a numpy array"
+                assert (
+                    X.shape == eX.shape
+                ), "if eX is a numpy array, X and eX must have the same shape"
+                # X = np.random.normal(X, eX)
+
+            if not (isinstance(eY, float) or isinstance(eY, int)):
+                assert isinstance(eY, np.ndarray), "eY must be a float or a numpy array"
+                assert (
+                    y.shape == eY.shape
+                ), "if eY is a numpy array, Y and eY must have the same shape"
+                # y = np.random.normal(y, eY)
+
+            # fit the scaler
+            if not self.scaler_is_trained:
+                self.scaler.fit(y)
+                self.scaler_is_trained = True
+
             # Parallel loop: we prefer the threading backend as the Cython code
             # for fitting the trees is internally releasing the Python GIL
             # making threading more efficient than multiprocessing in
@@ -517,16 +524,14 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
                 delayed(_parallel_build_trees)(
                     t,
                     self,
-                    X,
-                    y,
+                    np.random.normal(X, eX),
+                    self.scaler.transform(np.random.normal(y, eY)),
                     sample_weight,
                     i,
                     len(trees),
                     verbose=self.verbose,
                     class_weight=self.class_weight,
                     n_samples_bootstrap=n_samples_bootstrap,
-                    eX=eX,
-                    eY=eY,
                 )
                 for i, t in tqdm(enumerate(trees), total=len(trees), leave=leave_pbar)
             )
@@ -557,7 +562,13 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
         return self
 
     def predict(
-        self, X, eX=0.0, apply_bias=True, apply_calibration=True, leave_pbar=False
+        self,
+        X,
+        eX=0.0,
+        apply_bias=True,
+        apply_calibration=True,
+        apply_scaling=True,
+        leave_pbar=False,
     ):
         """
         Predict regression targets for X.
@@ -604,9 +615,17 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
             mean = preds.mean(axis=-1).reshape(-1, self.n_outputs_, 1)
             preds = (preds - mean) * self.calibration_values[:, None, None] + mean
 
+        if apply_scaling:
+            assert self.scaler_is_trained, "Scaler not trained yet!"
+            preds = np.stack(
+                Parallel(n_jobs=-1)(
+                    delayed(self.scaler.inverse_transform)(i)
+                    for i in tqdm(preds.transpose(2, 0, 1))
+                )
+            ).transpose(1, 2, 0)
         return preds
 
-    def fit_bias(self, X, y, eX=0.0, eY=0.0, apply_calibration=True):
+    def fit_bias(self, X, y, eX=0.0, apply_calibration=True):
         """
         Fit bias model to the data.
 
@@ -621,8 +640,14 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
             The target values. It is treated as a binary problem.
         """
 
+        y = self.scaler.transform(y)
+
         preds = self.predict(
-            X, eX=eX, apply_bias=False, apply_calibration=apply_calibration
+            X,
+            eX=eX,
+            apply_bias=False,
+            apply_calibration=apply_calibration,
+            apply_scaling=False,
         )
         residuals = y - preds.mean(axis=-1).reshape(-1, self.n_outputs_)
         self.bias_model = LinearRegression(fit_intercept=True, n_jobs=self.n_jobs)
@@ -671,15 +696,37 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
             Whether to normalize the MSE statistic to a max of 1.
         """
 
+        if not (isinstance(eY, float) or isinstance(eY, int)):
+            assert isinstance(eY, np.ndarray), "eY must be a float or a numpy array"
+            assert (
+                y.shape == eY.shape
+            ), "if eY is a numpy array, Y and eY must have the same shape"
+
         preds = self.predict(X, eX=eX, apply_bias=apply_bias, apply_calibration=False)
 
         grid = np.linspace(bounds[0], bounds[1], niter)
 
         self.calibration_values = np.zeros(self.n_outputs_)
 
+        def partial_scaler_transform(x, j):
+            return (x - self.scaler.mean_[j]) / self.scaler.scale_[j]
+
         for j in tqdm(range(self.n_outputs_)):
+
+            if not (isinstance(eY, float) or isinstance(eY, int)):
+                y_err_j = eY[:, j]
+            else:
+                y_err_j = eY
+
             goodness = [
-                test_calibration_value(preds[:, j], y[:, j].flatten(), i) for i in grid
+                test_calibration_value(
+                    preds[:, j],
+                    partial_scaler_transform(
+                        np.random.normal(y[:, j], y_err_j).reshape(-1, 1), j
+                    ).flatten(),
+                    i,
+                )
+                for i in grid
             ]
 
             ks_stats, mses = zip(*goodness)
