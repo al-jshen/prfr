@@ -636,6 +636,14 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
 
         if apply_scaling:
             assert self.scaler_is_trained, "Scaler not trained yet!"
+
+            bias = np.stack(
+                Parallel(n_jobs=-1, prefer="threads")(
+                    delayed(self.scaler.inverse_transform)(i)
+                    for i in tqdm(bias.transpose(2, 0, 1), desc="Unscaling biases")
+                )
+            ).transpose(1, 2, 0)
+
             preds = np.stack(
                 Parallel(n_jobs=-1, prefer="threads")(
                     delayed(self.scaler.inverse_transform)(i)
