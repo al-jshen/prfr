@@ -634,15 +634,19 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
             mean = preds.mean(axis=-1).reshape(-1, self.n_outputs_, 1)
             preds = (preds - mean) * self.calibration_values[:, None, None] + mean
 
+        if return_bias:
+            assert "bias" in locals()
+
         if apply_scaling:
             assert self.scaler_is_trained, "Scaler not trained yet!"
 
-            bias = np.stack(
-                Parallel(n_jobs=-1, prefer="threads")(
-                    delayed(self.scaler.inverse_transform)(i)
-                    for i in tqdm(bias.transpose(2, 0, 1), desc="Unscaling biases")
-                )
-            ).transpose(1, 2, 0)
+            if return_bias:
+                bias = np.stack(
+                    Parallel(n_jobs=-1, prefer="threads")(
+                        delayed(self.scaler.inverse_transform)(i)
+                        for i in tqdm(bias.transpose(2, 0, 1), desc="Unscaling biases")
+                    )
+                ).transpose(1, 2, 0)
 
             preds = np.stack(
                 Parallel(n_jobs=-1, prefer="threads")(
