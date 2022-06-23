@@ -8,6 +8,13 @@ Probabilistic random forest regressor: random forest model that accounts for err
 pip install prfr
 ```
 
+OR
+
+```bash
+pip install git+https://github.com/al-jshen/prfr
+```
+
+
 ## Example usage
 
 ```python
