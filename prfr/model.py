@@ -5,7 +5,8 @@ from joblib import Parallel, delayed
 from numba import jit, njit, prange
 from scipy.sparse import issparse
 from sklearn.ensemble import RandomForestRegressor
-from sklearn.ensemble._forest import _generate_sample_indices, _get_n_samples_bootstrap
+from sklearn.ensemble._forest import (_generate_sample_indices,
+                                      _get_n_samples_bootstrap)
 from sklearn.exceptions import DataConversionWarning
 from sklearn.linear_model import LinearRegression
 from sklearn.preprocessing import StandardScaler
