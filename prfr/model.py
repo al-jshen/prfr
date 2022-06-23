@@ -514,7 +514,7 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
                     axis=-1
                 )  # inverse sum of variance weighting
             elif np.isclose(eY, 0.):
-                isv_sample_weights = sample_weight
+                isv_sample_weights = None
             else:
                 eY = np.repeat(eY, self.n_outputs_)
                 eY = eY / self.scaler.scale_  # transform errors to same scale
