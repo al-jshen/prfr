@@ -502,14 +502,25 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
                 ), "if eX is a numpy array, X and eX must have the same shape"
                 # X = np.random.normal(X, eX)
 
+
             if not (isinstance(eY, float) or isinstance(eY, int)):
                 assert isinstance(eY, np.ndarray), "eY must be a float or a numpy array"
                 assert (
                     y.shape == eY.shape
                 ), "if eY is a numpy array, Y and eY must have the same shape"
-                # y = np.random.normal(y, eY)
+
+                eY = eY / self.scaler.scale_  # transform errors to same scale
+                isv_sample_weights = 1.0 / (eY**2).sum(
+                    axis=-1
+                )  # inverse sum of variance weighting
+            elif np.isclose(eY, 0.):
+                isv_sample_weights = sample_weight
             else:
                 eY = np.repeat(eY, self.n_outputs_)
+                eY = eY / self.scaler.scale_  # transform errors to same scale
+                isv_sample_weights = 1.0 / (eY**2).sum(
+                    axis=-1
+                )  # inverse sum of variance weighting
 
             # fit the scaler
             if not self.scaler_is_trained:
@@ -517,10 +528,6 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
                 self.scaler_is_trained = True
 
             y = self.scaler.transform(y)
-            eY = eY / self.scaler.scale_  # transform errors to same scale
-            isv_sample_weights = 1.0 / (eY**2).sum(
-                axis=-1
-            )  # inverse sum of variance weighting
 
             # Parallel loop: we prefer the threading backend as the Cython code
             # for fitting the trees is internally releasing the Python GIL
