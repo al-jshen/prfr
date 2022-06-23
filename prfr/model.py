@@ -5,8 +5,7 @@ from joblib import Parallel, delayed
 from numba import jit, njit, prange
 from scipy.sparse import issparse
 from sklearn.ensemble import RandomForestRegressor
-from sklearn.ensemble._forest import (_generate_sample_indices,
-                                      _get_n_samples_bootstrap)
+from sklearn.ensemble._forest import _generate_sample_indices, _get_n_samples_bootstrap
 from sklearn.exceptions import DataConversionWarning
 from sklearn.linear_model import LinearRegression
 from sklearn.preprocessing import StandardScaler
@@ -508,11 +507,19 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
                     y.shape == eY.shape
                 ), "if eY is a numpy array, Y and eY must have the same shape"
                 # y = np.random.normal(y, eY)
+            else:
+                eY = np.repeat(eY, self.n_outputs_)
 
             # fit the scaler
             if not self.scaler_is_trained:
                 self.scaler.fit(y)
                 self.scaler_is_trained = True
+
+            y = self.scaler.transform(y)
+            eY = eY / self.scaler.scale_  # transform errors to same scale
+            isv_sample_weights = 1.0 / (eY**2).sum(
+                axis=-1
+            )  # inverse sum of variance weighting
 
             # Parallel loop: we prefer the threading backend as the Cython code
             # for fitting the trees is internally releasing the Python GIL
@@ -520,20 +527,29 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
             # that case. However, for joblib 0.12+ we respect any
             # parallel_backend contexts set at a higher level,
             # since correctness does not rely on using threads.
-            trees = Parallel(n_jobs=self.n_jobs, verbose=self.verbose)(
+            trees = Parallel(
+                n_jobs=self.n_jobs, verbose=self.verbose, prefer="threads"
+            )(
                 delayed(_parallel_build_trees)(
                     t,
                     self,
                     np.random.normal(X, eX),
-                    self.scaler.transform(np.random.normal(y, eY)),
-                    sample_weight,
+                    # self.scaler.transform(np.random.normal(y, eY)),
+                    # sample_weight,
+                    y,
+                    isv_sample_weights,
                     i,
                     len(trees),
                     verbose=self.verbose,
                     class_weight=self.class_weight,
                     n_samples_bootstrap=n_samples_bootstrap,
                 )
-                for i, t in tqdm(enumerate(trees), total=len(trees), leave=leave_pbar)
+                for i, t in tqdm(
+                    enumerate(trees),
+                    total=len(trees),
+                    leave=leave_pbar,
+                    desc="Fitting model",
+                )
             )
 
             # Collect newly grown trees
@@ -618,9 +634,9 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
         if apply_scaling:
             assert self.scaler_is_trained, "Scaler not trained yet!"
             preds = np.stack(
-                Parallel(n_jobs=-1)(
+                Parallel(n_jobs=-1, prefer="threads")(
                     delayed(self.scaler.inverse_transform)(i)
-                    for i in tqdm(preds.transpose(2, 0, 1))
+                    for i in tqdm(preds.transpose(2, 0, 1), desc="Unscaling labels")
                 )
             ).transpose(1, 2, 0)
         return preds
@@ -711,7 +727,9 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
         def partial_scaler_transform(x, j):
             return (x - self.scaler.mean_[j]) / self.scaler.scale_[j]
 
-        for j in tqdm(range(self.n_outputs_)):
+        for j in (pbar := tqdm(range(self.n_outputs_))):
+
+            pbar.set_description(f"Calibrating variable {j + 1}")
 
             if not (isinstance(eY, float) or isinstance(eY, int)):
                 y_err_j = eY[:, j]
@@ -827,9 +845,9 @@ def rf_pred(
         labels: 3D array with shape (n_samples, n_outputs, n_trees)
     """
     out = np.array(
-        Parallel(n_jobs=n_jobs)(
+        Parallel(n_jobs=n_jobs, prefer="threads")(
             delayed(tree.predict)(np.random.normal(X, eX))
-            for tree in tqdm(model.estimators_, leave=leave_pbar)
+            for tree in tqdm(model.estimators_, leave=leave_pbar, desc="Predicting")
         )
     ).T
 
