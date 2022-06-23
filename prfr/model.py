@@ -586,6 +586,7 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
         apply_calibration=True,
         apply_scaling=True,
         leave_pbar=False,
+        return_bias=False,
     ):
         """
         Predict regression targets for X.
@@ -627,7 +628,8 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
         assert preds.shape[1] == self.n_outputs_
         assert preds.shape[2] == self.n_estimators
         if hasattr(self, "bias_model") and apply_bias:
-            preds += self.bias_model.predict(X).reshape(-1, self.n_outputs_, 1)
+            bias = self.bias_model.predict(X).reshape(-1, self.n_outputs_, 1)
+            preds += bias
         if hasattr(self, "calibration") and apply_calibration:
             mean = preds.mean(axis=-1).reshape(-1, self.n_outputs_, 1)
             preds = (preds - mean) * self.calibration_values[:, None, None] + mean
@@ -640,7 +642,11 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
                     for i in tqdm(preds.transpose(2, 0, 1), desc="Unscaling labels")
                 )
             ).transpose(1, 2, 0)
-        return preds
+
+        if return_bias:
+            return preds, bias
+        else:
+            return preds
 
     def fit_bias(self, X, y, eX=0.0, apply_calibration=True):
         """
