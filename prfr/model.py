@@ -642,7 +642,7 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
             assert self.scaler_is_trained, "Scaler not trained yet!"
 
             if return_bias:
-                bias =  bias * self.scaler.scale_
+                bias =  (bias[:,:,0] * self.scaler.scale_)[:,:,None]
 
             preds = np.stack(
                 Parallel(n_jobs=-1)(
