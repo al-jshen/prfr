@@ -647,7 +647,7 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
             preds = np.stack(
                 Parallel(n_jobs=-1)(
                     delayed(self.scaler.inverse_transform)(i)
-                    for i in tqdm(preds.transpose(2, 0, 1), desc="Unscaling labels")
+                    for i in preds.transpose(2, 0, 1)
                 )
             ).transpose(1, 2, 0)
 
