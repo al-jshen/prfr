@@ -509,7 +509,7 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
                 ), "if eY is a numpy array, Y and eY must have the same shape"
                 # y = np.random.normal(y, eY)
             else:
-                eY = np.repeat(eY, self.n_outputs_)
+                eY = np.ones_like(y) * eY
 
             # fit the scaler
             if not self.scaler_is_trained:
@@ -518,7 +518,7 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
 
             y = self.scaler.transform(y)
 
-            eY = eY / self.scaler.scale_  # transform errors to same scale
+            eY = eY / np.abs(self.scaler.scale_)  # transform errors to same scale
             isv_sample_weights = 1.0 / (eY**2).sum(
                 axis=-1
             )  # inverse sum of variance weighting
@@ -530,7 +530,7 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
             # parallel_backend contexts set at a higher level,
             # since correctness does not rely on using threads.
             trees = Parallel(
-                n_jobs=self.n_jobs, verbose=self.verbose, prefer="threads"
+                n_jobs=self.n_jobs, verbose=self.verbose
             )(
                 delayed(_parallel_build_trees)(
                     t,
@@ -645,7 +645,7 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
                 bias =  bias * self.scaler.scale_
 
             preds = np.stack(
-                Parallel(n_jobs=-1, prefer="threads")(
+                Parallel(n_jobs=-1)(
                     delayed(self.scaler.inverse_transform)(i)
                     for i in tqdm(preds.transpose(2, 0, 1), desc="Unscaling labels")
                 )
@@ -860,7 +860,7 @@ def rf_pred(
         labels: 3D array with shape (n_samples, n_outputs, n_trees)
     """
     out = np.array(
-        Parallel(n_jobs=n_jobs, prefer="threads")(
+        Parallel(n_jobs=n_jobs)(
             delayed(tree.predict)(np.random.normal(X, eX))
             for tree in tqdm(model.estimators_, leave=leave_pbar, desc="Predicting")
         )
