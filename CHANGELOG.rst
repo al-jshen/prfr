@@ -1,3 +1,7 @@
+0.1.5 (2022-06-28)
+++++++++++++++++++
+- Various bug fixes
+
 0.1.4 (2022-06-22)
 ++++++++++++++++++
 - Add option to get biases out of predict function
