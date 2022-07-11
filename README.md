@@ -1,6 +1,6 @@
 # prfr
 
-Probabilistic random forest regressor: random forest model that accounts for errors in predictors and yields calibrated probabilistic predictions.
+Probabilistic random forest regressor: random forest model that accounts for errors in predictors and labels, yields calibrated probabilistic predictions, and corrects for bias.
 
 ## Installation
 
