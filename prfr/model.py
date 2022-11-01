@@ -630,7 +630,7 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
             preds += bias
         if hasattr(self, "calibration_values") and apply_calibration:
             mean = preds.mean(axis=-1).reshape(-1, self.n_outputs_, 1)
-            preds = (preds - mean) * self.calibration_values[:, None, None] + mean
+            preds = (preds - mean) * self.calibration_values[None, :, None] + mean
 
         if return_bias:
             assert "bias" in locals()

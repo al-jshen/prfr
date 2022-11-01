@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "prfr"
-version = "0.1.6"
+version = "0.1.7"
 description = ""
 authors = ["Jeff Shen <jshen2014@hotmail.com>"]
 readme = "README.md"
