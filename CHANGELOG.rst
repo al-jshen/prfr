@@ -1,3 +1,7 @@
+0.1.6 (2022-10-31)
+++++++++++++++++++
+- Fix bug with calibration application
+
 0.1.5 (2022-06-28)
 ++++++++++++++++++
 - Various bug fixes
