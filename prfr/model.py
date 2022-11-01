@@ -5,8 +5,7 @@ from joblib import Parallel, delayed
 from numba import jit, njit, prange
 from scipy.sparse import issparse
 from sklearn.ensemble import RandomForestRegressor
-from sklearn.ensemble._forest import (_generate_sample_indices,
-                                      _get_n_samples_bootstrap)
+from sklearn.ensemble._forest import _generate_sample_indices, _get_n_samples_bootstrap
 from sklearn.exceptions import DataConversionWarning
 from sklearn.linear_model import LinearRegression
 from sklearn.preprocessing import StandardScaler
@@ -529,9 +528,7 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
             # that case. However, for joblib 0.12+ we respect any
             # parallel_backend contexts set at a higher level,
             # since correctness does not rely on using threads.
-            trees = Parallel(
-                n_jobs=self.n_jobs, verbose=self.verbose
-            )(
+            trees = Parallel(n_jobs=self.n_jobs, verbose=self.verbose)(
                 delayed(_parallel_build_trees)(
                     t,
                     self,
@@ -631,7 +628,7 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
         if hasattr(self, "bias_model") and apply_bias:
             bias = self.bias_model.predict(X).reshape(-1, self.n_outputs_, 1)
             preds += bias
-        if hasattr(self, "calibration") and apply_calibration:
+        if hasattr(self, "calibration_values") and apply_calibration:
             mean = preds.mean(axis=-1).reshape(-1, self.n_outputs_, 1)
             preds = (preds - mean) * self.calibration_values[:, None, None] + mean
 
@@ -642,7 +639,7 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
             assert self.scaler_is_trained, "Scaler not trained yet!"
 
             if return_bias:
-                bias =  bias[:,:,0] * self.scaler.scale_
+                bias = bias[:, :, 0] * self.scaler.scale_
 
             preds = np.stack(
                 Parallel(n_jobs=-1)(
