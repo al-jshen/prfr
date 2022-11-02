@@ -701,6 +701,7 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
         quantiles: array-like of shape (n_quantiles,) with quantiles to match on
         regularization_fn: function to apply to the calibration value to regularize within the optimization function
         """
+
         prediction = self.predict(
             X,
             eX=eX,
@@ -724,7 +725,8 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
                 args=args,
                 bounds=np.array([(0.01, np.inf)]),
                 paired=False,
-                callback=lambda x: print(x, obj_fn(x, *args)) if verbose else None,
+                disp=verbose,
+                # callback=lambda x: print(x, obj_fn(x, *args)) if verbose else None,
             )
             return sol
 
