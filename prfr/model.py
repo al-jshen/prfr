@@ -711,9 +711,7 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
                 quantiles - np.percentile(pvals, quantiles)
             ) + regularization_fn(calibration)
 
-        self.calibration_values = np.zeros(self.n_outputs_)
-
-        for i in tqdm(range(self.n_outputs_)):
+        def inner(i):
             sol = minimize(
                 obj_fn,
                 1,
@@ -721,7 +719,11 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
                 bounds=[(0.01, None)],
                 # callback=lambda x: print(x, obj_fn(x, prediction[:, i], y[:, i])),
             )
-            self.calibration_values[i] = sol.x
+            return sol.x
+
+        self.calibration_values = np.array(
+            Parallel(n_jobs=-1)(delayed(inner)(i) for i in range(self.n_outputs_))
+        )
 
     def _calibrate(
         self,
