@@ -730,7 +730,10 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
             )
             return sol
 
-        self.calibration_results = [opt(i) for i in range(self.n_outputs_)]
+        # self.calibration_results = [opt(i) for i in range(self.n_outputs_)]
+        self.calibration_results = Parallel(n_jobs=-1)(
+            delayed(opt)(i) for i in range(self.n_outputs_)
+        )
 
         self.calibration_values = np.array(
             [i.x[0] for i in self.calibration_results]
