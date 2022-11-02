@@ -14,7 +14,9 @@ from sklearn.utils import check_random_state, compute_sample_weight
 from sklearn.utils.fixes import delayed
 from sklearn.utils.multiclass import type_of_target
 from sklearn.utils.validation import _check_sample_weight
-from scipy.optimize import minimize
+
+# from scipy.optimize import minimize
+from noisyopt import minimizeSPSA
 from tqdm.auto import tqdm
 
 MAX_INT = np.iinfo(np.int32).max
@@ -687,9 +689,10 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
         X,
         y,
         eX=0.0,
+        eY=0.0,
         apply_bias=False,
-        quantiles=np.linspace(0, 1, 100),
         regularization_fn=lambda x: np.log10(x) ** 2,
+        verbose=True,
     ):
         """
         x: array-like of shape (n_samples, n_features)
@@ -705,25 +708,31 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
             apply_calibration=False,
         )
 
-        def obj_fn(calibration, pred, truth):
-            pvals = calc_pvals(pred, truth, calibration, quantiles)
+        quantiles = np.linspace(0.0, 1.0, self.n_estimators)
+
+        def obj_fn(calibration, pred, y, eY):
+            pvals = calc_pvals(pred, np.random.normal(y, eY), calibration, quantiles)
             return np.linalg.norm(
                 quantiles - np.percentile(pvals, quantiles)
             ) + regularization_fn(calibration)
 
-        def inner(i):
-            sol = minimize(
+        def opt(i):
+            args = (prediction[:, i], y[:, i], eY[:, i])
+            sol = minimizeSPSA(
                 obj_fn,
-                1,
-                args=(prediction[:, i], y[:, i]),
-                bounds=[(0.01, None)],
-                # callback=lambda x: print(x, obj_fn(x, prediction[:, i], y[:, i])),
+                x0=np.array([1.0]),
+                args=args,
+                bounds=np.array([(0.01, np.inf)]),
+                paired=False,
+                callback=lambda x: print(x, obj_fn(x, *args)) if verbose else None,
             )
-            return sol.x
+            return sol
+
+        self.calibration_results = [opt(i) for i in range(self.n_outputs_)]
 
         self.calibration_values = np.array(
-            Parallel(n_jobs=-1)(delayed(inner)(i) for i in range(self.n_outputs_))
-        )
+            [i.x[0] for i in self.calibration_results]
+        ).reshape(-1)
 
     def _calibrate(
         self,
@@ -833,7 +842,7 @@ def calc_pvals(pred, truth, calibration, quantiles):
     pvals = np.stack(
         [np.interp(truth[i], sorted_pred[i], quantiles) for i in range(truth.shape[0])]
     )
-    return pvals
+    return pvals.ravel()
 
 
 @njit

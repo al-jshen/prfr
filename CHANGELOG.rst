@@ -1,3 +1,7 @@
+0.1.10 (2022-11-02)
+++++++++++++++++++
+- Incorporate label noise into calibration using `noisyopt`
+
 0.1.9 (2022-11-02)
 ++++++++++++++++++
 - Parallelize calibration
