@@ -691,7 +691,7 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
         eX=0.0,
         eY=0.0,
         apply_bias=False,
-        regularization_fn=lambda x: np.log10(x) ** 2,
+        alpha=1.0,
         verbose=True,
     ):
         """
@@ -699,7 +699,7 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
         y: array-like of shape (n_samples, n_outputs)
         eX: array-like of shape (n_samples, n_features) or float
         quantiles: array-like of shape (n_quantiles,) with quantiles to match on
-        regularization_fn: function to apply to the calibration value to regularize within the optimization function
+        alpha: regularization strength
         """
 
         prediction = self.predict(
@@ -715,7 +715,7 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
             pvals = calc_pvals(pred, np.random.normal(y, eY), calibration, quantiles)
             return np.linalg.norm(
                 quantiles - np.percentile(pvals, quantiles)
-            ) + regularization_fn(calibration)
+            ) + alpha * np.square(np.log10(calibration))
 
         def opt(i):
             args = (prediction[:, i], y[:, i], eY[:, i])
