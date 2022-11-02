@@ -631,9 +631,6 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
         if hasattr(self, "bias_model") and apply_bias:
             bias = self.bias_model.predict(X).reshape(-1, self.n_outputs_, 1)
             preds += bias
-        if hasattr(self, "calibration_values") and apply_calibration:
-            mean = preds.mean(axis=-1).reshape(-1, self.n_outputs_, 1)
-            preds = (preds - mean) * self.calibration_values[None, :, None] + mean
 
         if return_bias:
             assert "bias" in locals()
@@ -650,6 +647,10 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
                     for i in preds.transpose(2, 0, 1)
                 )
             ).transpose(1, 2, 0)
+
+        if hasattr(self, "calibration_values") and apply_calibration:
+            mean = preds.mean(axis=-1).reshape(-1, self.n_outputs_, 1)
+            preds = (preds - mean) * self.calibration_values[None, :, None] + mean
 
         if return_bias:
             return preds, bias
@@ -702,11 +703,15 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
         alpha: regularization strength
         """
 
+        y = self.scaler.transform(y)
+        eY = eY / np.abs(self.scaler.scale_)  # transform errors to same scale
+
         prediction = self.predict(
             X,
             eX=eX,
             apply_bias=apply_bias,
             apply_calibration=False,
+            apply_scaling=False,
         )
 
         quantiles = np.linspace(0.0, 1.0, self.n_estimators)
@@ -792,7 +797,13 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
                 y.shape == eY.shape
             ), "if eY is a numpy array, Y and eY must have the same shape"
 
-        preds = self.predict(X, eX=eX, apply_bias=apply_bias, apply_calibration=False)
+        preds = self.predict(
+            X,
+            eX=eX,
+            apply_bias=apply_bias,
+            apply_calibration=False,
+            apply_scaling=False,
+        )
 
         grid = np.linspace(bounds[0], bounds[1], niter)
 
