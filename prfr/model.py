@@ -14,6 +14,7 @@ from sklearn.utils import check_random_state, compute_sample_weight
 from sklearn.utils.fixes import delayed
 from sklearn.utils.multiclass import type_of_target
 from sklearn.utils.validation import _check_sample_weight
+from scipy.optimize import minimize
 from tqdm.auto import tqdm
 
 MAX_INT = np.iinfo(np.int32).max
@@ -686,6 +687,47 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
         X,
         y,
         eX=0.0,
+        apply_bias=False,
+        quantiles=np.linspace(0, 1, 100),
+        regularization_fn=lambda x: np.log10(x) ** 2,
+    ):
+        """
+        x: array-like of shape (n_samples, n_features)
+        y: array-like of shape (n_samples, n_outputs)
+        eX: array-like of shape (n_samples, n_features) or float
+        quantiles: array-like of shape (n_quantiles,) with quantiles to match on
+        regularization_fn: function to apply to the calibration value to regularize within the optimization function
+        """
+        prediction = self.predict(
+            X,
+            eX=eX,
+            apply_bias=apply_bias,
+            apply_calibration=False,
+        )
+
+        def obj_fn(calibration, pred, truth):
+            pvals = calc_pvals(pred, truth, calibration, quantiles)
+            return np.linalg.norm(
+                quantiles - np.percentile(pvals, quantiles)
+            ) + regularization_fn(calibration)
+
+        self.calibration_values = np.zeros(self.n_outputs_)
+
+        for i in tqdm(range(self.n_outputs_)):
+            sol = minimize(
+                obj_fn,
+                1,
+                args=(prediction[:, i], y[:, i]),
+                bounds=[(0.01, None)],
+                # callback=lambda x: print(x, obj_fn(x, prediction[:, i], y[:, i])),
+            )
+            self.calibration_values[i] = sol.x
+
+    def _calibrate(
+        self,
+        X,
+        y,
+        eX=0.0,
         eY=0.0,
         bounds=(0.5, 1.5),
         niter=(100),
@@ -773,6 +815,23 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
             match_idx = np.argmin(metric)
 
             self.calibration_values[j] = grid[match_idx]
+
+
+def calc_pvals(pred, truth, calibration, quantiles):
+    """
+    pred: (n_samples, n_trees)
+    truth: (n_samples,)
+    calibration: float
+
+    output: (n_samples,)
+    """
+    pred_mean = pred.mean(axis=-1)[:, None]
+    pred_adjusted = (pred - pred_mean) * calibration + pred_mean
+    sorted_pred = np.sort(pred_adjusted, axis=-1)
+    pvals = np.stack(
+        [np.interp(truth[i], sorted_pred[i], quantiles) for i in range(truth.shape[0])]
+    )
+    return pvals
 
 
 @njit
