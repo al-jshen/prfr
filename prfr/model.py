@@ -752,6 +752,7 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
         ks_norm=True,
         mse_norm=True,
         apply_bias=True,
+        alpha=1.0,
     ):
         """
         Automatically calibrate the standard deviation of the probabilistic random forest (widths of the PDFs).
@@ -780,6 +781,9 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
 
         mse_norm : bool, default=True
             Whether to normalize the MSE statistic to a max of 1.
+
+        alpha: float, default=1.
+            Regularization strength for the calibration.
         """
 
         if not (isinstance(eY, float) or isinstance(eY, int)):
@@ -827,6 +831,7 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
                 mses /= mses.max()
 
             metric = ks_weight * ks_stats + mse_weight * mses
+            metric += alpha * np.square(np.log10(grid))
 
             match_idx = np.argmin(metric)
 
