@@ -1,3 +1,7 @@
+0.1.9 (2022-11-02)
+++++++++++++++++++
+- Parallelize calibration
+
 0.1.8 (2022-11-02)
 ++++++++++++++++++
 - New calibration method using regularized quantile matching
