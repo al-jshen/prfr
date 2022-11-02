@@ -1,3 +1,7 @@
+0.1.8 (2022-11-02)
+++++++++++++++++++
+- New calibration method using regularized quantile matching
+
 0.1.6, 0.1.7 (2022-10-31)
 ++++++++++++++++++
 - Fix bug with calibration application
