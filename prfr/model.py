@@ -15,8 +15,9 @@ from sklearn.utils.fixes import delayed
 from sklearn.utils.multiclass import type_of_target
 from sklearn.utils.validation import _check_sample_weight
 
-# from scipy.optimize import minimize
-from noisyopt import minimizeSPSA
+from scipy.optimize import minimize
+
+# from noisyopt import minimizeSPSA
 from tqdm.auto import tqdm
 
 MAX_INT = np.iinfo(np.int32).max
@@ -703,34 +704,31 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
         alpha: regularization strength
         """
 
-        y = self.scaler.transform(y)
-        eY = eY / np.abs(self.scaler.scale_)  # transform errors to same scale
-
         prediction = self.predict(
             X,
             eX=eX,
             apply_bias=apply_bias,
             apply_calibration=False,
-            apply_scaling=False,
         )
 
         quantiles = np.linspace(0.0, 1.0, self.n_estimators)
 
-        def obj_fn(calibration, pred, y, eY):
-            pvals = calc_pvals(pred, np.random.normal(y, eY), calibration, quantiles)
+        def obj_fn(calibration, pred, truth):
+            pvals = calc_pvals(pred, truth, calibration, quantiles)
             return np.linalg.norm(
                 quantiles - np.percentile(pvals, quantiles)
             ) + alpha * np.square(np.log10(calibration))
 
         def opt(i):
-            args = (prediction[:, i], y[:, i], eY[:, i])
-            sol = minimizeSPSA(
+            args = (prediction[:, i], np.random.normal(y[:, i], eY[:, i]))
+            sol = minimize(
                 obj_fn,
                 x0=np.array([1.0]),
                 args=args,
-                bounds=np.array([(0.01, np.inf)]),
-                paired=False,
-                disp=verbose,
+                bounds=[(0.01, None)]
+                # bounds=np.array([(0.01, np.inf)]),
+                # paired=False,
+                # disp=verbose,
                 # callback=lambda x: print(x, obj_fn(x, *args)) if verbose else None,
             )
             return sol
@@ -742,7 +740,7 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
 
         self.calibration_values = np.array(
             [i.x[0] for i in self.calibration_results]
-        ).reshape(-1)
+        ).ravel()
 
     def _calibrate(
         self,
