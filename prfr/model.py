@@ -691,7 +691,6 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
         X,
         y,
         eX=0.0,
-        eY=0.0,
         apply_bias=False,
         alpha=1.0,
         verbose=True,
@@ -720,20 +719,18 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
             ) + alpha * np.square(np.log10(calibration))
 
         def opt(i):
-            args = (prediction[:, i], np.random.normal(y[:, i], eY[:, i]))
+            args = (prediction[:, i], y[:, i])
             sol = minimize(
                 obj_fn,
-                x0=np.array([1.0]),
+                x0=1.0,
                 args=args,
-                bounds=[(0.01, None)]
+                bounds=[(0.01, None)],
                 # bounds=np.array([(0.01, np.inf)]),
                 # paired=False,
-                # disp=verbose,
-                # callback=lambda x: print(x, obj_fn(x, *args)) if verbose else None,
+                callback=lambda x: print(x, obj_fn(x, *args)) if verbose else None,
             )
             return sol
 
-        # self.calibration_results = [opt(i) for i in range(self.n_outputs_)]
         self.calibration_results = Parallel(n_jobs=-1)(
             delayed(opt)(i) for i in range(self.n_outputs_)
         )
