@@ -2,7 +2,6 @@ from warnings import catch_warnings, simplefilter, warn
 
 import numpy as np
 from joblib import Parallel, delayed
-from numba import jit, njit, prange
 from scipy.sparse import issparse
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.ensemble._forest import _generate_sample_indices, _get_n_samples_bootstrap
@@ -11,16 +10,25 @@ from sklearn.linear_model import LinearRegression
 from sklearn.preprocessing import StandardScaler
 from sklearn.tree._tree import DOUBLE, DTYPE
 from sklearn.utils import check_random_state, compute_sample_weight
-from sklearn.utils.fixes import delayed
 from sklearn.utils.multiclass import type_of_target
 from sklearn.utils.validation import _check_sample_weight
 
-from scipy.optimize import minimize
+try:
+    import jax
+    import jax.numpy as jnp
+    import optax
+    import jaxopt
+    from jax.flatten_util import ravel_pytree
+except ImportError:
+    _has_jax = None
+else:
+    _has_jax = True
 
-# from noisyopt import minimizeSPSA
 from tqdm.auto import tqdm
 
 MAX_INT = np.iinfo(np.int32).max
+eps32 = np.finfo(np.float32).eps
+eps64 = np.finfo(np.float64).eps
 
 
 def _parallel_build_trees(
@@ -650,8 +658,14 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
             ).transpose(1, 2, 0)
 
         if hasattr(self, "calibration_values") and apply_calibration:
-            mean = preds.mean(axis=-1).reshape(-1, self.n_outputs_, 1)
-            preds = (preds - mean) * self.calibration_values[None, :, None] + mean
+            calibration = (
+                X**2 @ self.calibration_values["quad"]
+                + X @ self.calibration_values["linear"]
+                + self.calibration_values["bias"]
+            )
+            preds = jax.vmap(adjust_predictions, in_axes=(1, 1))(
+                calibration, preds
+            ).transpose(1, 0, 2)
 
         if return_bias:
             return preds, bias
@@ -691,160 +705,64 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
         X,
         y,
         eX=0.0,
-        apply_bias=False,
+        apply_bias=True,
         alpha=1.0,
-        verbose=True,
+        optimizer=optax.adam(1e-3),
+        maxiter=200,
     ):
         """
         x: array-like of shape (n_samples, n_features)
         y: array-like of shape (n_samples, n_outputs)
         eX: array-like of shape (n_samples, n_features) or float
-        quantiles: array-like of shape (n_quantiles,) with quantiles to match on
         alpha: regularization strength
         """
 
-        prediction = self.predict(
+        pred = self.predict(
             X,
             eX=eX,
             apply_bias=apply_bias,
             apply_calibration=False,
         )
+        n_features = X.shape[1]
+        n_outputs = y.shape[1]
 
-        quantiles = np.linspace(0.0, 1.0, self.n_estimators)
-
-        def obj_fn(calibration, pred, truth):
-            pvals = calc_pvals(pred, truth, calibration, quantiles)
-            return np.linalg.norm(
-                quantiles - np.percentile(pvals, quantiles)
-            ) + alpha * np.square(np.log10(calibration))
-
-        def opt(i):
-            args = (prediction[:, i], y[:, i])
-            sol = minimize(
-                obj_fn,
-                x0=1.0,
-                args=args,
-                bounds=[(0.01, None)],
-                # bounds=np.array([(0.01, np.inf)]),
-                # paired=False,
-                callback=lambda x: print(x, obj_fn(x, *args)) if verbose else None,
+        args = (
+            X,
+            pred,
+            y,
+        )
+        x0 = dict(
+            quad=jnp.ones((n_features, n_outputs)) * 1e-4,
+            linear=jnp.ones((n_features, n_outputs)) * 1e-4,
+            bias=jnp.ones((n_outputs,)),
+        )
+        params = x0
+        opt = optimizer
+        solver = jaxopt.OptaxSolver(calibration_loss, opt=opt, maxiter=maxiter)
+        opt_state = solver.init_state(x0, *args)
+        params = x0
+        for i in (pbar := tqdm(range(solver.maxiter))):
+            params, opt_state = solver.update(params, opt_state, *args, alpha=alpha)
+            pbar.set_description(
+                f"Step {i+1}/{solver.maxiter} | Loss: {opt_state.value:.4f}"
             )
-            return sol
-
-        self.calibration_results = Parallel(n_jobs=-1)(
-            delayed(opt)(i) for i in range(self.n_outputs_)
-        )
-
-        self.calibration_values = np.array(
-            [i.x[0] for i in self.calibration_results]
-        ).ravel()
-
-    def _calibrate(
-        self,
-        X,
-        y,
-        eX=0.0,
-        eY=0.0,
-        bounds=(0.5, 1.5),
-        niter=(100),
-        ks_weight=1.0,
-        mse_weight=1.0,
-        ks_norm=True,
-        mse_norm=True,
-        apply_bias=True,
-        alpha=1.0,
-    ):
-        """
-        Automatically calibrate the standard deviation of the probabilistic random forest (widths of the PDFs).
-
-        Parameters
-        ----------
-        X : {array-like, sparse matrix} of shape (n_samples, n_features)
-            The input samples to use for prediction in the calibration.
-
-        y : array-like of shape (n_samples,)
-            The target values to use for calibration.
-
-        eX : array-like of shape (n_samples, n_features) or float, default=0.
-            The uncertainty/error on the input samples. If an array-like, it
-            must be the same shape as X. If a float, it is broadcasted to
-            have the same shape as X.
-
-        ks_weight : float, default=1.
-            The weight to apply to the Kolmogorov-Smirnov statistic.
-
-        mse_weight : float, default=1.
-            The weight to apply to the MSE value.
-
-        ks_norm : bool, default=True
-            Whether to normalize the Kolmogorov-Smirnov statistic to a max of 1.
-
-        mse_norm : bool, default=True
-            Whether to normalize the MSE statistic to a max of 1.
-
-        alpha: float, default=1.
-            Regularization strength for the calibration.
-        """
-
-        if not (isinstance(eY, float) or isinstance(eY, int)):
-            assert isinstance(eY, np.ndarray), "eY must be a float or a numpy array"
-            assert (
-                y.shape == eY.shape
-            ), "if eY is a numpy array, Y and eY must have the same shape"
-
-        preds = self.predict(
-            X,
-            eX=eX,
-            apply_bias=apply_bias,
-            apply_calibration=False,
-            apply_scaling=False,
-        )
-
-        grid = np.linspace(bounds[0], bounds[1], niter)
-
-        self.calibration_values = np.zeros(self.n_outputs_)
-
-        def partial_scaler_transform(x, j):
-            return (x - self.scaler.mean_[j]) / self.scaler.scale_[j]
-
-        for j in (pbar := tqdm(range(self.n_outputs_))):
-
-            pbar.set_description(f"Calibrating variable {j + 1}")
-
-            if not (isinstance(eY, float) or isinstance(eY, int)):
-                y_err_j = eY[:, j]
-            else:
-                y_err_j = eY
-
-            goodness = [
-                test_calibration_value(
-                    preds[:, j],
-                    partial_scaler_transform(
-                        np.random.normal(y[:, j], y_err_j).reshape(-1, 1), j
-                    ).flatten(),
-                    i,
-                )
-                for i in grid
-            ]
-
-            ks_stats, mses = zip(*goodness)
-            ks_stats = np.array(ks_stats)
-            mses = np.array(mses)
-
-            if ks_norm:
-                ks_stats /= ks_stats.max()
-            if mse_norm:
-                mses /= mses.max()
-
-            metric = ks_weight * ks_stats + mse_weight * mses
-            metric += alpha * np.square(np.log10(grid))
-
-            match_idx = np.argmin(metric)
-
-            self.calibration_values[j] = grid[match_idx]
+        self.calibration_values = params
 
 
-def calc_pvals(pred, truth, calibration, quantiles):
+@jax.jit
+def adjust_predictions(calibration, preds):
+    """
+    calibration: (n_samples,)
+    preds: (n_samples, n_trees)
+    """
+    # assert calibration.shape[0] == preds.shape[0]
+    pred_mean = preds.mean(axis=-1)[:, None]
+    pred_adjusted = (preds - pred_mean) * calibration[:, None] + pred_mean
+    return pred_adjusted
+
+
+@jax.jit
+def calc_pvals(pred, truth, calibration):
     """
     pred: (n_samples, n_trees)
     truth: (n_samples,)
@@ -852,75 +770,29 @@ def calc_pvals(pred, truth, calibration, quantiles):
 
     output: (n_samples,)
     """
-    pred_mean = pred.mean(axis=-1)[:, None]
-    pred_adjusted = (pred - pred_mean) * calibration + pred_mean
-    sorted_pred = np.sort(pred_adjusted, axis=-1)
-    pvals = np.stack(
-        [np.interp(truth[i], sorted_pred[i], quantiles) for i in range(truth.shape[0])]
-    )
+    pred_adjusted = adjust_predictions(calibration, pred)
+    sorted_pred = jnp.sort(pred_adjusted, axis=-1)
+    sorted_pred = sorted_pred.at[:, 0].add(-eps32)
+    sorted_pred = sorted_pred.at[:, -1].add(eps32)
+    quantiles = jnp.arange(1, sorted_pred.shape[1] + 1) / sorted_pred.shape[1]
+    pvals = jax.vmap(jnp.interp, in_axes=(0, 0, None))(truth, sorted_pred, quantiles)
     return pvals.ravel()
 
 
-@njit
-def ecdf(x):
-    """
-    Compute the empirical CDF of x.
-    """
-    x = np.sort(x)
-    y = np.arange(1, x.size + 1) / x.size
-    return x, y
-
-
-@njit
-def inv_cdf(x: np.ndarray, v: float, calibration_value: float):
-    """
-    x (ndarray): 1D array of samples to use for calibration
-    v (float): value to calibrate to
-    calibration_value (float): multiplicative factor to adjust the standard deviations
-                               of the probabilistic predictions by
-    """
-    x = (x - np.mean(x)) * calibration_value + np.mean(x)
-    x, y = ecdf(x)
-    return np.interp(v, x, y)
-
-
-@njit(parallel=True)
-def multi_inv_cdfs(predictions, values, calibration_value):
-    """
-    Compute the empirical CDF of each row in predictions and use a linear interpolation
-    to apply the CDF to the values.
-    """
-    n = predictions.shape[0]
-    inv_cdf_vals = np.zeros(n)
-    for i in prange(n):
-        inv_cdf_vals[i] = inv_cdf(predictions[i], values[i], calibration_value)
-    return inv_cdf_vals
-
-
-@jit
-def test_calibration_value(predictions, values, calibration_value):
-    """
-    For a given calibration value, compute the the uniformity of the values transformed by the empirical CDFs of the predictions. Uses a uniform(0, 1) distribution as the reference distribution. The uniformity is calculated by a weighted sum of the 2-sample Kolmogorov-Smirnov statistic and MSE value between the CDF of the transformed values and the reference CDF.
-
-    Parameters
-    ----------
-    predictions : ndarray
-        2D array of predictions. Each row is a prediction for a particular input sample.
-    values : ndarray
-        1D array of values. Each element is a value for a particular input sample.
-    calibration_value : float
-        The calibration value to test.
-    """
-    inv_cdf_vals = multi_inv_cdfs(predictions, values, calibration_value)
-    x = np.sort(inv_cdf_vals)
-    y = np.arange(1, x.size + 1) / x.size
-
-    ks_i = np.argmax(np.square(x - y))
-    ks_stat = np.abs(x[ks_i] - y[ks_i])
-
-    mse = np.mean(np.square(x - y))
-
-    return ks_stat, mse
+@jax.jit
+def calibration_loss(coefficients, features, pred, truth, alpha=0.05):
+    calib = (
+        features**2 @ coefficients["quad"]
+        + features @ coefficients["linear"]
+        + coefficients["bias"]
+    )
+    calib = jnp.clip(calib, 0.01, None)
+    pvals = jax.vmap(calc_pvals, in_axes=(1, 1, 1))(pred, truth, calib)
+    quantiles = jnp.linspace(0.0, 1.0, pvals.shape[1])
+    ecdfs = jnp.quantile(pvals, quantiles, axis=-1)
+    losses = jnp.sum(jnp.square(quantiles[:, None] - ecdfs))
+    regularization = jnp.sum(jnp.abs(ravel_pytree(coefficients)[0]))
+    return losses + alpha * regularization
 
 
 def rf_pred(

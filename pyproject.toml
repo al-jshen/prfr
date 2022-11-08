@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "prfr"
-version = "0.1.10"
+version = "0.1.11"
 description = ""
 authors = ["Jeff Shen <jshen2014@hotmail.com>"]
 readme = "README.md"
@@ -14,7 +14,9 @@ scipy = "^1.8.0"
 sklearn = "^0.0"
 tqdm = "^4.64.0"
 noisyopt = "^0.2.2"
-
+jax = {version = "^0.3.24"}
+jaxopt = {version = "^0.5.5"}
+optax = {version = "^0.1.3"}
 
 [build-system]
 requires = ["poetry-core"]

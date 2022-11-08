@@ -1,3 +1,7 @@
+0.1.11 (2022-11-08)
+++++++++++++++++++
+- Rewrite calibration in JAX
+
 0.1.10 (2022-11-02)
 ++++++++++++++++++
 - Incorporate label noise into calibration using `noisyopt`
