@@ -20,7 +20,8 @@ try:
     import jaxopt
     from jax.flatten_util import ravel_pytree
 except ImportError:
-    _has_jax = None
+    _has_jax = False
+    from scipy.optimize import minimize
 else:
     _has_jax = True
 
@@ -597,7 +598,7 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
         apply_scaling=True,
         leave_pbar=False,
         return_bias=False,
-    ):
+    ) -> np.ndarray:
         """
         Predict regression targets for X.
 
@@ -707,8 +708,10 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
         eX=0.0,
         apply_bias=True,
         alpha=1.0,
-        optimizer=optax.adam(1e-3),
-        maxiter=200,
+        optimizer=None,
+        maxiter=500 if _has_jax else 20,
+        verbose=True,
+        tol=1e-5 if _has_jax else 1e-2,
     ):
         """
         x: array-like of shape (n_samples, n_features)
@@ -716,7 +719,6 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
         eX: array-like of shape (n_samples, n_features) or float
         alpha: regularization strength
         """
-
         pred = self.predict(
             X,
             eX=eX,
@@ -726,73 +728,147 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
         n_features = X.shape[1]
         n_outputs = y.shape[1]
 
-        args = (
-            X,
-            pred,
-            y,
-        )
-        x0 = dict(
-            quad=jnp.ones((n_features, n_outputs)) * 1e-4,
-            linear=jnp.ones((n_features, n_outputs)) * 1e-4,
-            bias=jnp.ones((n_outputs,)),
-        )
-        params = x0
-        opt = optimizer
-        solver = jaxopt.OptaxSolver(calibration_loss, opt=opt, maxiter=maxiter)
-        opt_state = solver.init_state(x0, *args)
-        params = x0
-        for i in (pbar := tqdm(range(solver.maxiter))):
-            params, opt_state = solver.update(params, opt_state, *args, alpha=alpha)
-            pbar.set_description(
-                f"Step {i+1}/{solver.maxiter} | Loss: {opt_state.value:.4f}"
+        if _has_jax:
+            if optimizer is None:
+                optimizer = optax.adam(1e-3)
+
+            args = (
+                X,
+                pred,
+                y,
             )
-        self.calibration_values = params
+            x0 = dict(
+                quad=jnp.ones((n_features, n_outputs)) * 1e-4,
+                linear=jnp.ones((n_features, n_outputs)) * 1e-4,
+                bias=jnp.ones((n_outputs,)),
+            )
+            params = x0
+            opt = optimizer
+            solver = jaxopt.OptaxSolver(calibration_loss, opt=opt, maxiter=maxiter)
+            opt_state = solver.init_state(params, *args)
+
+            last_10 = np.repeat(np.nan, 10)
+
+            for i in (pbar := tqdm(range(solver.maxiter))):
+                params, opt_state = solver.update(params, opt_state, *args, alpha=alpha)
+                loss = opt_state.value
+                last_10[0:-1] = last_10[1:]
+                last_10[-1] = loss
+                running_var = np.var(last_10)
+                pbar.set_description(f"Step {i+1}/{solver.maxiter} | Loss: {loss:.4f}")
+                if np.isfinite(running_var) and running_var < tol:
+                    print(f"Converged after {i} iterations!")
+                    break
+            self.calibration_values = params
+        else:
+            args = (pred, y, alpha, verbose)
+            x0 = np.ones((n_outputs,))
+            sol = minimize(
+                calibration_loss,
+                x0,
+                args=args,
+                method="L-BFGS-B",
+                bounds=[(0.05, 10.0)] * n_outputs,
+                options={"maxiter": maxiter},
+                tol=tol,
+            )
+            self.calibration_values = sol.x
 
 
-@jax.jit
-def adjust_predictions(calibration, preds):
-    """
-    calibration: (n_samples,)
-    preds: (n_samples, n_trees)
-    """
-    # assert calibration.shape[0] == preds.shape[0]
-    pred_mean = preds.mean(axis=-1)[:, None]
-    pred_adjusted = (preds - pred_mean) * calibration[:, None] + pred_mean
-    return pred_adjusted
+if _has_jax:
 
+    @jax.jit
+    def adjust_predictions(calibration, preds):
+        """
+        calibration: (n_samples,)
+        preds: (n_samples, n_trees)
+        """
+        # assert calibration.shape[0] == preds.shape[0]
+        pred_mean = preds.mean(axis=-1)[:, None]
+        pred_adjusted = (preds - pred_mean) * calibration[:, None] + pred_mean
+        return pred_adjusted
 
-@jax.jit
-def calc_pvals(pred, truth, calibration):
-    """
-    pred: (n_samples, n_trees)
-    truth: (n_samples,)
-    calibration: float
+    @jax.jit
+    def calc_pvals(pred, truth, calibration):
+        """
+        pred: (n_samples, n_trees)
+        truth: (n_samples,)
+        calibration: float
 
-    output: (n_samples,)
-    """
-    pred_adjusted = adjust_predictions(calibration, pred)
-    sorted_pred = jnp.sort(pred_adjusted, axis=-1)
-    sorted_pred = sorted_pred.at[:, 0].add(-eps32)
-    sorted_pred = sorted_pred.at[:, -1].add(eps32)
-    quantiles = jnp.arange(1, sorted_pred.shape[1] + 1) / sorted_pred.shape[1]
-    pvals = jax.vmap(jnp.interp, in_axes=(0, 0, None))(truth, sorted_pred, quantiles)
-    return pvals.ravel()
+        output: (n_samples,)
+        """
+        pred_adjusted = adjust_predictions(calibration, pred)
+        sorted_pred = jnp.sort(pred_adjusted, axis=-1)
+        sorted_pred = sorted_pred.at[:, 0].add(-eps32)
+        sorted_pred = sorted_pred.at[:, -1].add(eps32)
+        quantiles = jnp.arange(1, sorted_pred.shape[1] + 1) / sorted_pred.shape[1]
+        pvals = jax.vmap(jnp.interp, in_axes=(0, 0, None))(
+            truth, sorted_pred, quantiles
+        )
+        return pvals.ravel()
 
+    @jax.jit
+    def calibration_loss(coefficients, features, pred, truth, alpha=0.05):
+        calib = (
+            features**2 @ coefficients["quad"]
+            + features @ coefficients["linear"]
+            + coefficients["bias"]
+        )
+        calib = jnp.clip(calib, 0.01, None)
+        pvals = jax.vmap(calc_pvals, in_axes=(1, 1, 1))(pred, truth, calib)
+        quantiles = jnp.linspace(0.0, 1.0, pvals.shape[1])
+        ecdfs = jnp.quantile(pvals, quantiles, axis=-1)
+        losses = jnp.sum(jnp.square(quantiles[:, None] - ecdfs))
+        regularization = jnp.sum(jnp.abs(ravel_pytree(coefficients)[0]))
+        return losses + alpha * regularization
 
-@jax.jit
-def calibration_loss(coefficients, features, pred, truth, alpha=0.05):
-    calib = (
-        features**2 @ coefficients["quad"]
-        + features @ coefficients["linear"]
-        + coefficients["bias"]
-    )
-    calib = jnp.clip(calib, 0.01, None)
-    pvals = jax.vmap(calc_pvals, in_axes=(1, 1, 1))(pred, truth, calib)
-    quantiles = jnp.linspace(0.0, 1.0, pvals.shape[1])
-    ecdfs = jnp.quantile(pvals, quantiles, axis=-1)
-    losses = jnp.sum(jnp.square(quantiles[:, None] - ecdfs))
-    regularization = jnp.sum(jnp.abs(ravel_pytree(coefficients)[0]))
-    return losses + alpha * regularization
+else:
+
+    def adjust_predictions(calibration, preds):
+        """
+        calibration: (n_samples,)
+        preds: (n_samples, n_trees)
+        """
+        pred_mean = preds.mean(axis=-1)[:, None]
+        pred_adjusted = (preds - pred_mean) * calibration + pred_mean
+        return pred_adjusted
+
+    def calc_pvals(pred, truth, calibration):
+        """
+        pred: (n_samples, n_trees)
+        truth: (n_samples,)
+        calibration: float
+
+        output: (n_samples,)
+        """
+        pred_adjusted = adjust_predictions(calibration, pred)
+        sorted_pred = np.sort(pred_adjusted, axis=-1)
+        sorted_pred[:, 0] -= eps32
+        sorted_pred[:, -1] += eps32
+        quantiles = np.arange(1, sorted_pred.shape[1] + 1) / sorted_pred.shape[1]
+        pvals = [
+            np.interp(truth[i], sorted_pred[i], quantiles)
+            for i in range(truth.shape[0])
+        ]
+        return np.array(pvals).ravel()
+
+    def calibration_loss(coefficients, pred, truth, alpha=0.05, verbose=False):
+        calib = coefficients
+        calib = np.clip(calib, 0.01, None)
+        pvals = np.stack(
+            [
+                calc_pvals(pred[:, i], truth[:, i], calib[i])
+                for i in range(pred.shape[1])
+            ]
+        )
+        quantiles = np.linspace(0.0, 1.0, np.minimum(pred.shape[0] // 100, 1000))
+        ecdfs = np.quantile(pvals, quantiles, axis=-1)
+        losses = np.sum(np.square(quantiles[:, None] - ecdfs))
+        regularization = np.sum(np.log10(calib) ** 2)
+        l = losses + alpha * regularization
+        if verbose:
+            print(l)
+        return l
 
 
 def rf_pred(
