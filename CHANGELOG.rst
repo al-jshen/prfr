@@ -1,6 +1,7 @@
 0.2.1 (2022-11-13)
 ++++++++++++++++++
 - No-JAX version of the code is now available
+- add tolerance arg to stop JAX calibration earlier based on running variance
 
 0.1.11, 0.2.0 (2022-11-08)
 ++++++++++++++++++
