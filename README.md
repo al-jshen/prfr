@@ -2,7 +2,7 @@
 
 Probabilistic random forest regressor: random forest model that accounts for errors in predictors and labels, yields calibrated probabilistic predictions, and corrects for bias.
 
-For a faster and more elaborate calibration routine, it is highly recommended that you install the package with the extra `jax` feature. This requires that you have a [JAX](https://github.com/google/jax#installation) installation.
+For a faster and more elaborate calibration routine (highly recommended), a [JAX](https://github.com/google/jax#installation) installation is required. You can install the package with the extra `jax` feature, which will install the necessary dependencies. 
 
 ## Installation
 
