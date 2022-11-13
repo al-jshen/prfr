@@ -1,3 +1,7 @@
+0.2.2 (2022-11-13)
+++++++++++++++++++
+- remove `numba` dependency
+
 0.2.1 (2022-11-13)
 ++++++++++++++++++
 - No-JAX version of the code is now available
