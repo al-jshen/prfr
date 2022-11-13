@@ -6,5 +6,6 @@ __license__ = "MIT"
 
 from prfr.model import ProbabilisticRandomForestRegressor
 from prfr.utils import split_arrays
+from prfr.model import _has_jax as has_jax
 
-__all__ = ["ProbabilisticRandomForestRegressor", "split_arrays"]
+__all__ = ["ProbabilisticRandomForestRegressor", "split_arrays", "has_jax"]
