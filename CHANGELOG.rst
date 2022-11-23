@@ -1,3 +1,7 @@
+0.2.3 (2022-11-23)
+++++++++++++++++++
+- add minimum iterations to calibration optimizer
+
 0.2.2 (2022-11-13)
 ++++++++++++++++++
 - remove `numba` dependency

@@ -1,4 +1,4 @@
-__version__ = "0.2.2"
+__version__ = "0.2.3"
 __uri__ = "http://github.com/al-jshen/prfr"
 __author__ = "Jeff Shen"
 __email__ = "jshen2014@hotmail.com"
