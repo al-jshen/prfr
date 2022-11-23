@@ -709,6 +709,7 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
         apply_bias=True,
         alpha=1.0,
         optimizer=None,
+        miniter=200 if _has_jax else 10,
         maxiter=500 if _has_jax else 20,
         verbose=True,
         tol=1e-5 if _has_jax else 1e-2,
@@ -756,7 +757,7 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
                 last_10[-1] = loss
                 running_var = np.var(last_10)
                 pbar.set_description(f"Step {i+1}/{solver.maxiter} | Loss: {loss:.4f}")
-                if np.isfinite(running_var) and running_var < tol:
+                if np.isfinite(running_var) and running_var < tol and i > miniter:
                     print(f"Converged after {i} iterations!")
                     break
             self.calibration_values = params
