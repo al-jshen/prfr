@@ -713,6 +713,7 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
         maxiter=500 if _has_jax else 20,
         verbose=True,
         tol=1e-5 if _has_jax else 1e-2,
+        simple=False,
     ):
         """
         x: array-like of shape (n_samples, n_features)
@@ -730,8 +731,6 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
         n_outputs = y.shape[1]
 
         if _has_jax:
-            if optimizer is None:
-                optimizer = optax.adam(1e-3)
 
             args = (
                 X,
@@ -744,6 +743,18 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
                 bias=jnp.ones((n_outputs,)),
             )
             params = x0
+            if optimizer is None:
+                if simple == False:
+                    optimizer = optax.adam(1e-3)
+                else:
+                    optimizer = optax.multi_transform(
+                        dict(
+                            quad=optax.set_to_zero(),
+                            linear=optax.set_to_zero(),
+                            bias=optax.adam(1e-3),
+                        ),
+                        ("quad", "linear", "bias"),
+                    )
             opt = optimizer
             solver = jaxopt.OptaxSolver(calibration_loss, opt=opt, maxiter=maxiter)
             opt_state = solver.init_state(params, *args)
