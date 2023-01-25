@@ -12,7 +12,6 @@ from sklearn.tree._tree import DOUBLE, DTYPE
 from sklearn.utils import check_random_state, compute_sample_weight
 from sklearn.utils.multiclass import type_of_target
 from sklearn.utils.validation import _check_sample_weight
-from .utils import ecdf
 
 try:
     import jax
@@ -749,12 +748,8 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
                     optimizer = optax.adam(1e-3)
                 else:
                     optimizer = optax.multi_transform(
-                        dict(
-                            quad=optax.set_to_zero(),
-                            linear=optax.set_to_zero(),
-                            bias=optax.adam(1e-3),
-                        ),
-                        ("quad", "linear", "bias"),
+                        {"adam": optax.adam(1e-3), "zero": optax.set_to_zero()},
+                        {"quad": "zero", "linear": "zero", "bias": "adam"},
                     )
             opt = optimizer
             solver = jaxopt.OptaxSolver(calibration_loss, opt=opt, maxiter=maxiter)

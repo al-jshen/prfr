@@ -43,12 +43,18 @@ def split_arrays(*arrays, test_size, valid_size=0):
 
 
 def ecdf(x):
-    x = np.sort(x)
-    y = np.arange(1, x.size + 1) / x.size
+    if _has_jax:
+        x = jnp.sort(x)
+        y = jnp.arange(1, x.size + 1) / x.size
+    else:
+        x = np.sort(x)
+        y = np.arange(1, x.size + 1) / x.size
     return x, y
 
 
-def check_calibration(model, X, y, eX=0.0, apply_bias=True, apply_scaling=True):
+def check_calibration(
+    model, X, y, eX=0.0, apply_bias=True, apply_calibration=True, apply_scaling=True
+):
     """
     Check calibration of the model. Applies the inverse empirical CDF to the
     predictions and compares them to the true values. The resulting
@@ -59,6 +65,7 @@ def check_calibration(model, X, y, eX=0.0, apply_bias=True, apply_scaling=True):
             X,
             eX=eX,
             apply_bias=apply_bias,
+            apply_calibration=apply_calibration,
             apply_scaling=apply_scaling,
         )
         ecx, ecy = jax.vmap(jax.vmap(ecdf, in_axes=(0,)), in_axes=(0,))(pred)
