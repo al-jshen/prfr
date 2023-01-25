@@ -1,3 +1,9 @@
+0.2.4 (2022-11-23)
+++++++++++++++++++
+- fix masking in calibration with `simple=True`
+- add `check_calibration` function
+- make `calibrate` a standalone function
+
 0.2.3 (2022-11-23)
 ++++++++++++++++++
 - add minimum iterations to calibration optimizer
