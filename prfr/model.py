@@ -701,86 +701,87 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
         self.bias_model = LinearRegression(fit_intercept=True, n_jobs=self.n_jobs)
         self.bias_model.fit(X, residuals)
 
-    def calibrate(
-        self,
+
+def calibrate(
+    model,
+    X,
+    y,
+    eX=0.0,
+    apply_bias=True,
+    alpha=1.0,
+    optimizer=None,
+    miniter=200 if _has_jax else 10,
+    maxiter=500 if _has_jax else 20,
+    verbose=True,
+    tol=1e-5 if _has_jax else 1e-2,
+    simple=False,
+):
+    """
+    x: array-like of shape (n_samples, n_features)
+    y: array-like of shape (n_samples, n_outputs)
+    eX: array-like of shape (n_samples, n_features) or float
+    alpha: regularization strength
+    """
+    pred = model.predict(
         X,
-        y,
-        eX=0.0,
-        apply_bias=True,
-        alpha=1.0,
-        optimizer=None,
-        miniter=200 if _has_jax else 10,
-        maxiter=500 if _has_jax else 20,
-        verbose=True,
-        tol=1e-5 if _has_jax else 1e-2,
-        simple=False,
-    ):
-        """
-        x: array-like of shape (n_samples, n_features)
-        y: array-like of shape (n_samples, n_outputs)
-        eX: array-like of shape (n_samples, n_features) or float
-        alpha: regularization strength
-        """
-        pred = self.predict(
+        eX=eX,
+        apply_bias=apply_bias,
+        apply_calibration=False,
+    )
+    n_features = X.shape[1]
+    n_outputs = y.shape[1]
+
+    if _has_jax:
+
+        args = (
             X,
-            eX=eX,
-            apply_bias=apply_bias,
-            apply_calibration=False,
+            pred,
+            y,
         )
-        n_features = X.shape[1]
-        n_outputs = y.shape[1]
+        x0 = dict(
+            quad=jnp.ones((n_features, n_outputs)) * 1e-4,
+            linear=jnp.ones((n_features, n_outputs)) * 1e-4,
+            bias=jnp.ones((n_outputs,)),
+        )
+        params = x0
+        if optimizer is None:
+            if simple == False:
+                optimizer = optax.adam(1e-3)
+            else:
+                optimizer = optax.multi_transform(
+                    {"adam": optax.adam(1e-3), "zero": optax.set_to_zero()},
+                    {"quad": "zero", "linear": "zero", "bias": "adam"},
+                )
+        opt = optimizer
+        solver = jaxopt.OptaxSolver(calibration_loss, opt=opt, maxiter=maxiter)
+        opt_state = solver.init_state(params, *args)
 
-        if _has_jax:
+        last_10 = np.repeat(np.nan, 10)
 
-            args = (
-                X,
-                pred,
-                y,
-            )
-            x0 = dict(
-                quad=jnp.ones((n_features, n_outputs)) * 1e-4,
-                linear=jnp.ones((n_features, n_outputs)) * 1e-4,
-                bias=jnp.ones((n_outputs,)),
-            )
-            params = x0
-            if optimizer is None:
-                if simple == False:
-                    optimizer = optax.adam(1e-3)
-                else:
-                    optimizer = optax.multi_transform(
-                        {"adam": optax.adam(1e-3), "zero": optax.set_to_zero()},
-                        {"quad": "zero", "linear": "zero", "bias": "adam"},
-                    )
-            opt = optimizer
-            solver = jaxopt.OptaxSolver(calibration_loss, opt=opt, maxiter=maxiter)
-            opt_state = solver.init_state(params, *args)
-
-            last_10 = np.repeat(np.nan, 10)
-
-            for i in (pbar := tqdm(range(solver.maxiter))):
-                params, opt_state = solver.update(params, opt_state, *args, alpha=alpha)
-                loss = opt_state.value
-                last_10[0:-1] = last_10[1:]
-                last_10[-1] = loss
-                running_var = np.var(last_10)
-                pbar.set_description(f"Step {i+1}/{solver.maxiter} | Loss: {loss:.4f}")
-                if np.isfinite(running_var) and running_var < tol and i > miniter:
-                    print(f"Converged after {i} iterations!")
-                    break
-            self.calibration_values = params
-        else:
-            args = (pred, y, alpha, verbose)
-            x0 = np.ones((n_outputs,))
-            sol = minimize(
-                calibration_loss,
-                x0,
-                args=args,
-                method="L-BFGS-B",
-                bounds=[(0.05, 10.0)] * n_outputs,
-                options={"maxiter": maxiter},
-                tol=tol,
-            )
-            self.calibration_values = sol.x
+        for i in (pbar := tqdm(range(solver.maxiter))):
+            params, opt_state = solver.update(params, opt_state, *args, alpha=alpha)
+            loss = opt_state.value
+            last_10[0:-1] = last_10[1:]
+            last_10[-1] = loss
+            running_var = np.var(last_10)
+            pbar.set_description(f"Step {i+1}/{solver.maxiter} | Loss: {loss:.4f}")
+            if np.isfinite(running_var) and running_var < tol and i > miniter:
+                print(f"Converged after {i} iterations!")
+                break
+        model.calibration_values = params
+    else:
+        args = (pred, y, alpha, verbose)
+        x0 = np.ones((n_outputs,))
+        sol = minimize(
+            calibration_loss,
+            x0,
+            args=args,
+            method="L-BFGS-B",
+            bounds=[(0.05, 10.0)] * n_outputs,
+            options={"maxiter": maxiter},
+            tol=tol,
+        )
+        model.calibration_values = sol.x
 
 
 if _has_jax:
