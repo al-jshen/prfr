@@ -52,11 +52,12 @@ def ecdf(x):
     return x, y
 
 
-def check_calibration(preds, truth):
+def pit(preds, truth):
     """
-    Check calibration of the model. Applies the inverse empirical CDF to the
-    predictions and compares them to the true values. The resulting
-    distribution of values should be close to uniform.
+    Check calibration of the model using the probability integral
+    transform method (see Dawid 1984, Diebold 1998). Applies the
+    empirical CDF to the true values to get PIT values. The
+    distribution of PIT values should be close to uniform.
     """
     if _has_jax:
         ecx, ecy = jax.vmap(jax.vmap(ecdf, in_axes=(0,)), in_axes=(0,))(preds)
