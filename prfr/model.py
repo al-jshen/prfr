@@ -12,6 +12,7 @@ from sklearn.tree._tree import DOUBLE, DTYPE
 from sklearn.utils import check_random_state, compute_sample_weight
 from sklearn.utils.multiclass import type_of_target
 from sklearn.utils.validation import _check_sample_weight
+from .utils import ecdf
 
 try:
     import jax
@@ -785,6 +786,29 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
                 tol=tol,
             )
             self.calibration_values = sol.x
+
+    def check_calibration(self, X, y, eX=0.0, apply_bias=True, apply_scaling=True):
+        """
+        Check calibration of the model. Applies the inverse empirical CDF to the
+        predictions and compares them to the true values. The resulting
+        distribution of values should be close to uniform.
+        """
+        if _has_jax:
+            pred = self.predict(
+                X,
+                eX=eX,
+                apply_bias=apply_bias,
+                apply_scaling=apply_scaling,
+            )
+            ecx, ecy = jax.vmap(jax.vmap(ecdf, in_axes=(0,)), in_axes=(0,))(pred)
+            qtls = jax.vmap(jax.vmap(jnp.interp, in_axes=(0, 0, 0)), in_axes=(0, 0, 0))(
+                y, ecx, ecy
+            )
+            return qtls
+        else:
+            raise NotImplementedError(
+                "This method currently requires JAX to be installed."
+            )
 
 
 if _has_jax:

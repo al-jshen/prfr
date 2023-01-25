@@ -1,4 +1,5 @@
 from sklearn.model_selection import train_test_split
+import numpy as np
 
 
 def split_arrays(*arrays, test_size, valid_size=0):
@@ -31,3 +32,9 @@ def split_arrays(*arrays, test_size, valid_size=0):
         return train_arrays, test_arrays, valid_arrays
 
     return train_arrays, test_arrays
+
+
+def ecdf(x):
+    x = np.sort(x)
+    y = np.arange(1, x.size + 1) / x.size
+    return x, y
