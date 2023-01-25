@@ -5,7 +5,7 @@ __email__ = "jshen2014@hotmail.com"
 __license__ = "MIT"
 
 from prfr.model import ProbabilisticRandomForestRegressor, calibrate
-from prfr.utils import split_arrays, check_calibration
+from prfr.utils import split_arrays, pit
 from prfr.model import _has_jax as has_jax
 
 __all__ = [
@@ -13,5 +13,5 @@ __all__ = [
     "calibrate",
     "split_arrays",
     "has_jax",
-    "check_calibration",
+    "pit",
 ]
