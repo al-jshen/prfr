@@ -52,25 +52,16 @@ def ecdf(x):
     return x, y
 
 
-def check_calibration(
-    model, X, y, eX=0.0, apply_bias=True, apply_calibration=True, apply_scaling=True
-):
+def check_calibration(preds, truth):
     """
     Check calibration of the model. Applies the inverse empirical CDF to the
     predictions and compares them to the true values. The resulting
     distribution of values should be close to uniform.
     """
     if _has_jax:
-        pred = model.predict(
-            X,
-            eX=eX,
-            apply_bias=apply_bias,
-            apply_calibration=apply_calibration,
-            apply_scaling=apply_scaling,
-        )
-        ecx, ecy = jax.vmap(jax.vmap(ecdf, in_axes=(0,)), in_axes=(0,))(pred)
+        ecx, ecy = jax.vmap(jax.vmap(ecdf, in_axes=(0,)), in_axes=(0,))(preds)
         qtls = jax.vmap(jax.vmap(jnp.interp, in_axes=(0, 0, 0)), in_axes=(0, 0, 0))(
-            y, ecx, ecy
+            truth, ecx, ecy
         )
         return qtls
     else:
