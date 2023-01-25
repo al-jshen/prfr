@@ -1,6 +1,14 @@
 from sklearn.model_selection import train_test_split
 import numpy as np
 
+try:
+    import jax
+    import jax.numpy as jnp
+except ImportError:
+    _has_jax = False
+else:
+    _has_jax = True
+
 
 def split_arrays(*arrays, test_size, valid_size=0):
     """
@@ -38,3 +46,25 @@ def ecdf(x):
     x = np.sort(x)
     y = np.arange(1, x.size + 1) / x.size
     return x, y
+
+
+def check_calibration(model, X, y, eX=0.0, apply_bias=True, apply_scaling=True):
+    """
+    Check calibration of the model. Applies the inverse empirical CDF to the
+    predictions and compares them to the true values. The resulting
+    distribution of values should be close to uniform.
+    """
+    if _has_jax:
+        pred = model.predict(
+            X,
+            eX=eX,
+            apply_bias=apply_bias,
+            apply_scaling=apply_scaling,
+        )
+        ecx, ecy = jax.vmap(jax.vmap(ecdf, in_axes=(0,)), in_axes=(0,))(pred)
+        qtls = jax.vmap(jax.vmap(jnp.interp, in_axes=(0, 0, 0)), in_axes=(0, 0, 0))(
+            y, ecx, ecy
+        )
+        return qtls
+    else:
+        raise NotImplementedError("This method currently requires JAX to be installed.")
