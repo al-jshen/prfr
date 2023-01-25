@@ -701,6 +701,35 @@ class ProbabilisticRandomForestRegressor(RandomForestRegressor):
         self.bias_model = LinearRegression(fit_intercept=True, n_jobs=self.n_jobs)
         self.bias_model.fit(X, residuals)
 
+    def calibrate(
+        self,
+        X,
+        y,
+        eX=0.0,
+        apply_bias=True,
+        alpha=1.0,
+        optimizer=None,
+        miniter=200 if _has_jax else 10,
+        maxiter=500 if _has_jax else 20,
+        verbose=True,
+        tol=1e-5 if _has_jax else 1e-2,
+        simple=False,
+    ):
+        calibrate(
+            self,
+            X,
+            y,
+            eX,
+            apply_bias,
+            alpha,
+            optimizer,
+            miniter,
+            maxiter,
+            verbose,
+            tol,
+            simple,
+        )
+
 
 def calibrate(
     model,
@@ -739,19 +768,18 @@ def calibrate(
             y,
         )
         x0 = dict(
-            quad=jnp.ones((n_features, n_outputs)) * 1e-4,
-            linear=jnp.ones((n_features, n_outputs)) * 1e-4,
+            quad=jnp.zeros((n_features, n_outputs)),
+            linear=jnp.zeros((n_features, n_outputs)),
             bias=jnp.ones((n_outputs,)),
         )
         params = x0
         if optimizer is None:
-            if simple == False:
-                optimizer = optax.adam(1e-3)
-            else:
-                optimizer = optax.multi_transform(
-                    {"adam": optax.adam(1e-3), "zero": optax.set_to_zero()},
-                    {"quad": "zero", "linear": "zero", "bias": "adam"},
-                )
+            optimizer = optax.adam(1e-3)
+        if simple:
+            optimizer = optax.multi_transform(
+                {"adam": optimizer, "zero": optax.set_to_zero()},
+                {"quad": "zero", "linear": "zero", "bias": "adam"},
+            )
         opt = optimizer
         solver = jaxopt.OptaxSolver(calibration_loss, opt=opt, maxiter=maxiter)
         opt_state = solver.init_state(params, *args)
